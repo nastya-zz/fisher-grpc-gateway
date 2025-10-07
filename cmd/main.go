@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -14,6 +15,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+
+	"grpc-gateway/internal/paths"
 )
 
 type ctxUserIDKey struct{}
@@ -26,44 +29,18 @@ func getenv(key, def string) string {
 	return def
 }
 
-// publicPaths returns list of public path patterns from env PUBLIC_PATHS.
-// Comma-separated, supports exact match ("/healthz") and prefix match with '*' ("/auth/*").
-func publicPaths() []string {
-	raw := getenv("PUBLIC_PATHS", "/v1/healthz,/v1/auth/login,/v1/posts")
-	parts := strings.Split(raw, ",")
-	res := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			res = append(res, p)
-		}
-	}
-	return res
-}
-
-func isPublicPath(path string, patterns []string) bool {
-	for _, pat := range patterns {
-		if strings.HasSuffix(pat, "*") {
-			prefix := strings.TrimSuffix(pat, "*")
-			if strings.HasPrefix(path, prefix) {
-				return true
-			}
-			continue
-		}
-		if path == pat {
-			return true
-		}
-	}
-	return false
-}
-
 func main() {
 	authAddr := getenv("AUTH_GRPC_ADDR", "localhost:50051")
 	userAddr := getenv("USER_GRPC_ADDR", "localhost:50052")
 	postAddr := getenv("POST_GRPC_ADDR", "localhost:50053")
 
 	// Коннект к gRPC auth для проверки токена
-	authConn, _ := grpc.Dial(authAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	authConn, err := grpc.Dial(authAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		fmt.Printf("Failed to connect to auth service at %s: %v\n", authAddr, err)
+		os.Exit(1)
+	}
+	defer authConn.Close()
 	authClient := authgw.NewAuthV1Client(authConn)
 
 	// Гейтвей: маппинг HTTP→gRPC и прокидка метаданных
@@ -85,22 +62,33 @@ func main() {
 	)
 
 	dial := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
-	_ = usergw.RegisterUserV1HandlerFromEndpoint(context.Background(), mux, userAddr, dial)
-	_ = postgw.RegisterPostServiceHandlerFromEndpoint(context.Background(), mux, postAddr, dial)
-	_ = authgw.RegisterAuthV1HandlerFromEndpoint(context.Background(), mux, authAddr, dial)
+	if err := usergw.RegisterUserV1HandlerFromEndpoint(context.Background(), mux, userAddr, dial); err != nil {
+		fmt.Printf("Failed to register user service handler: %v\n", err)
+		os.Exit(1)
+	}
+	if err := postgw.RegisterPostServiceHandlerFromEndpoint(context.Background(), mux, postAddr, dial); err != nil {
+		fmt.Printf("Failed to register post service handler: %v\n", err)
+		os.Exit(1)
+	}
+	if err := authgw.RegisterAuthV1HandlerFromEndpoint(context.Background(), mux, authAddr, dial); err != nil {
+		fmt.Printf("Failed to register auth service handler: %v\n", err)
+		os.Exit(1)
+	}
 
-	pubs := publicPaths()
+	pubs := paths.PublicPaths()
 
 	// Middleware: проверка JWT через gRPC auth
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Пропусти публичные маршруты и preflight
-		if r.Method == http.MethodOptions || isPublicPath(r.URL.Path, pubs) {
+
+		// публичные маршруты и preflight
+		if r.Method == http.MethodOptions || paths.IsPublicPath(r.URL.Path, pubs) {
 			mux.ServeHTTP(w, r)
 			return
 		}
 
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" || !strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+			fmt.Println("unauthorized", authHeader)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -109,8 +97,8 @@ func main() {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
 
-		// Подставь точные названия RPC из твоего auth_v1
 		resp, err := authClient.ValidateToken(ctx, &authgw.ValidateTokenRequest{Token: token})
+
 		if err != nil || resp.GetClaims().GetId() == "" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -123,5 +111,11 @@ func main() {
 		mux.ServeHTTP(w, r.WithContext(ctx))
 	})
 
-	_ = http.ListenAndServe(":8080", handler)
+	port := getenv("PORT", "9999")
+
+	fmt.Printf("Starting HTTP server on :%s...\n", port)
+	if err := http.ListenAndServe(":"+port, handler); err != nil {
+		fmt.Printf("HTTP server failed: %v\n", err)
+		os.Exit(1)
+	}
 }
