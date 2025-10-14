@@ -10,6 +10,7 @@ import (
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	authgw "github.com/nastya-zz/fisher-protocols/gen/auth_v1" // сгенерируй из [fisher-protocols](https://github.com/nastya-zz/fisher-protocols)
+	feedgw "github.com/nastya-zz/fisher-protocols/gen/feed_v1"
 	postgw "github.com/nastya-zz/fisher-protocols/gen/post_v1"
 	usergw "github.com/nastya-zz/fisher-protocols/gen/user_v1"
 	"google.golang.org/grpc"
@@ -34,6 +35,7 @@ func main() {
 	authAddr := getenv("AUTH_GRPC_ADDR", "127.0.0.1:50051")
 	userAddr := getenv("USER_GRPC_ADDR", "127.0.0.1:50052")
 	postAddr := getenv("POST_GRPC_ADDR", "127.0.0.1:50053")
+	feedAddr := getenv("FEED_GRPC_ADDR", "127.0.0.1:50054")
 
 	// Коннект к gRPC auth для проверки токена (lazy connection)
 	authConn, err := grpc.NewClient(authAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -90,6 +92,13 @@ func main() {
 	}
 	defer postConn.Close()
 
+	feedConn, err := grpc.NewClient(feedAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		fmt.Printf("Failed to create feed client: %v\n", err)
+		os.Exit(1)
+	}
+	defer feedConn.Close()
+
 	// Регистрация handlers через готовые клиенты
 	fmt.Printf("Registering user service handler for %s\n", userAddr)
 	if err := usergw.RegisterUserV1Handler(context.Background(), mux, userConn); err != nil {
@@ -103,6 +112,11 @@ func main() {
 
 	fmt.Printf("Registering auth service handler for %s\n", authAddr)
 	if err := authgw.RegisterAuthV1Handler(context.Background(), mux, authConn); err != nil {
+		fmt.Printf("WARNING: Failed to register auth service handler: %v\n", err)
+	}
+
+	fmt.Printf("Registering feed service handler for %s\n", feedAddr)
+	if err := feedgw.RegisterFeedV1Handler(context.Background(), mux, feedConn); err != nil {
 		fmt.Printf("WARNING: Failed to register auth service handler: %v\n", err)
 	}
 
