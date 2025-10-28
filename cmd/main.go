@@ -173,7 +173,7 @@ func main() {
 		mux.ServeHTTP(w, r.WithContext(ctx))
 	})
 
-	port := getenv("PORT", "9999")
+	port := getenv("GATEWAY_PORT", "9999")
 
 	fmt.Printf("Starting HTTP server on :%s...\n", port)
 	if err := http.ListenAndServe(":"+port, handler); err != nil {

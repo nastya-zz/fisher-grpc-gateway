@@ -1,0 +1,15 @@
+services:
+  grpc-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - "AUTH_GRPC_ADDR=${AUTH_GRPC_ADDR}"
+      - "USER_GRPC_ADDR=${USER_GRPC_ADDR}"
+      - "POST_GRPC_ADDR=${POST_GRPC_ADDR}"
+      - "FEED_GRPC_ADDR=${FEED_GRPC_ADDR}"
+      - "GATEWAY_PORT=${GATEWAY_PORT}"
+    ports:
+      - "${GATEWAY_PORT}:${GATEWAY_PORT}"
+    container_name: grpc-gateway
+    restart: unless-stopped

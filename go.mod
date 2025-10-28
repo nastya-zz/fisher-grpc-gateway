@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.3
-	github.com/nastya-zz/fisher-protocols v0.0.48
+	github.com/nastya-zz/fisher-protocols v0.0.52
 	google.golang.org/grpc v1.76.0
 )
 
